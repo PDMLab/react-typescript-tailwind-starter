@@ -1,0 +1,59 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'staging'
+      - 'develop'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Get current version
+        id: version
+        run: |
+          # Determine version based on the branch
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            ENVIRONMENT=prod
+          elif [[ "${GITHUB_REF}" == "refs/heads/staging" ]]; then
+            ENVIRONMENT=stag
+          elif [[ "${GITHUB_REF}" == "refs/heads/develop" ]]; then
+            ENVIRONMENT=dev
+          fi
+
+          # Get the latest tag version
+          VERSION=$(cat VERSION)  # assuming you store the version in a file
+          NEW_VERSION=$((VERSION + 1))
+          echo $NEW_VERSION > VERSION
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
+          echo "Tagging as $ENVIRONMENT v$NEW_VERSION"
+
+      - name: Build Docker image
+        run: |
+          docker build --build-arg ENV=${{ env.ENVIRONMENT }} -t mustafaeligere/dockersample:${{ env.ENVIRONMENT }}-v${{ env.NEW_VERSION }} -t mustafaeligere/dockersample:live-${{ env.ENVIRONMENT }} .
+
+      - name: Log in to DockerHub
+        run: echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+      - name: Push Docker image
+        run: |
+          docker push mustafaeligere/dockersample:${{ env.ENVIRONMENT }}-v${{ env.NEW_VERSION }}
+          docker push mustafaeligere/dockersample:live-${{ env.ENVIRONMENT }}
+
+      - name: Update VERSION file in repo
+        run: |
+          git config --local user.name "github-actions"
+          git config --local user.email "github-actions@github.com"
+          git add VERSION
+          git commit -m "Bump $ENVIRONMENT version to v${NEW_VERSION}"
+          git push origin ${{ github.ref }}
